@@ -12,7 +12,7 @@ class ProductAPITest(TestCase):
         self.client = APIClient()
 
         # Create a user (for testing authentication)
-        self.user = User.objects.create_user(name='testuser', email='example@gmail.com', password='testpassword')
+        self.user = User.objects.create_user(username='testuser', email='example@gmail.com', password='testpassword')
         self.access_token = AccessToken.for_user(self.user)
 
         # Create categories
@@ -36,15 +36,19 @@ class ProductAPITest(TestCase):
         )
 
     def test_get_all_products(self):
-        # Test retrieving all products
+        """
+        Ensure we can retrieve all products.
+        """
         url = reverse('product-list-create')
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['results']), 2)  # Assuming you have 2 products in setUp
+        self.assertEqual(len(response.data['results']), 2)
 
     def test_get_product_detail(self):
-        # Test retrieving a single product detail
+        """
+        Ensure we can retrieve a product by its ID.
+        """
         url = reverse('product-detail', args=[self.product1.id])
         response = self.client.get(url)
 
@@ -52,40 +56,111 @@ class ProductAPITest(TestCase):
         self.assertEqual(response.data['name'], 'Laptop')
 
     def test_create_product_authenticated(self):
-        # Test creating a product when authenticated
+        """
+        Ensure we can create a new product when authenticated.
+        """
         url = reverse('product-list-create')
         data = {
             'name': 'Keyboard',
             'description': 'Mechanical keyboard for gaming',
             'price': 100.00,
             'stock': 20,
-            'category': self.category1.id  # Assuming category ID is sent in the request
+            'category': self.category1.id
         }
 
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
         response = self.client.post(url, data, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(Product.objects.count(), 3)  # Assuming new product is created
+        self.assertEqual(Product.objects.count(), 3)
 
-    # Add more tests for update, delete, search functionality, etc.
+    def test_create_product_unauthenticated(self):
+        """
+        Ensure we cannot create a product when unauthenticated.
+        """
+        url = reverse('product-list-create')
+        data = {
+            'name': 'Mouse',
+            'description': 'Wireless mouse',
+            'price': 50.00,
+            'stock': 30,
+            'category': self.category1.id
+        }
 
-    # Example of test for search functionality
+        response = self.client.post(url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_update_product_authenticated(self):
+        """
+        Ensure we can update an existing product when authenticated.
+        """
+        url = reverse('product-detail', args=[self.product1.id])
+        data = {
+            'name': 'Laptop Pro',
+            'description': 'Upgraded powerful laptop for professionals',
+            'price': 2000.00,
+            'stock': 5,
+            'category': self.category1.id
+        }
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        response = self.client.put(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.product1.refresh_from_db()
+        self.assertEqual(self.product1.name, 'Laptop Pro')
+        self.assertEqual(self.product1.price, 2000.00)
+
+    def test_delete_product_authenticated(self):
+        """
+        Ensure we can delete an existing product when authenticated.
+        """
+        url = reverse('product-detail', args=[self.product1.id])
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(Product.objects.count(), 1)
+
     def test_search_products(self):
-        # Test searching for products
+        """
+        Ensure we can search for products.
+        """
         url = reverse('product-list-create') + '?search=Laptop'
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['results']), 1)  # Assuming only one product matches 'Laptop'
+        self.assertEqual(len(response.data['results']), 1)
 
-    # Example of test for pagination
     def test_pagination(self):
-        # Test pagination of products
+        """
+        Ensure the product list endpoint supports pagination.
+        """
         url = reverse('product-list-create') + '?page=1&page_size=1'
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 1)
-        self.assertIn('next', response.data)  # Check if 'next' pagination link is present
+        self.assertIn('next', response.data)
 
+    def test_filter_products_by_category(self):
+        """
+        Ensure we can filter products by category.
+        """
+        url = reverse('product-list-create') + f'?category={self.category1.id}'
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertEqual(response.data['results'][0]['name'], 'Laptop')
+
+    def test_sort_products_by_price(self):
+        """
+        Ensure we can sort products by price.
+        """
+        url = reverse('product-list-create') + '?ordering=price'
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['results'][0]['name'], 'T-shirt')
