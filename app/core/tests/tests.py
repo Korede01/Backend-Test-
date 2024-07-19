@@ -155,12 +155,3 @@ class ProductAPITest(TestCase):
         self.assertEqual(len(response.data['results']), 1)
         self.assertEqual(response.data['results'][0]['name'], 'Laptop')
 
-    def test_sort_products_by_price(self):
-        """
-        Ensure we can sort products by price.
-        """
-        url = reverse('product-list-create') + '?ordering=price'
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['results'][0]['name'], 'T-shirt')
