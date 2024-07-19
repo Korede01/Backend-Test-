@@ -2,7 +2,8 @@ from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
-from .models import Product, Category
+from products.models import Product, Category
+from order.models import Order, OrderItem
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import AccessToken
 
@@ -155,3 +156,43 @@ class ProductAPITest(TestCase):
         self.assertEqual(len(response.data['results']), 1)
         self.assertEqual(response.data['results'][0]['name'], 'Laptop')
 
+class OrderAPITest(TestCase):
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username='testuser', email='example@gmail.com', password='testpassword')
+        self.access_token = AccessToken.for_user(self.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+
+        self.category = Category.objects.create(name='Electronics')
+        self.product1 = Product.objects.create(name='Laptop', description='Powerful laptop', price=1500.00, stock=10, category=self.category)
+        self.product2 = Product.objects.create(name='Mouse', description='Wireless mouse', price=50.00, stock=100, category=self.category)
+
+    def test_place_order(self):
+        url = reverse('order-list')
+        data = {
+            "items": [
+                {"product": self.product1.name, "quantity": 1},
+                {"product": self.product2.name, "quantity": 2}
+            ]
+        }
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Order.objects.count(), 1)
+        self.assertEqual(OrderItem.objects.count(), 2)
+        self.assertEqual(OrderItem.objects.first().product, self.product1)
+
+    def test_order_history(self):
+        # Create an order for testing
+        order = Order.objects.create(user=self.user)
+        OrderItem.objects.create(order=order, product=self.product1, quantity=1)
+        OrderItem.objects.create(order=order, product=self.product2, quantity=2)
+
+        url = reverse('order-list')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['id'], order.id)
+        self.assertEqual(len(response.data[0]['items']), 2)
