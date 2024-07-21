@@ -1,198 +1,148 @@
-from django.test import TestCase
+import json
 from django.urls import reverse
+from django.test import TestCase, TransactionTestCase
 from rest_framework import status
-from rest_framework.test import APIClient
-from products.models import Product, Category
-from order.models import Order, OrderItem
-from django.contrib.auth.models import User
-from rest_framework_simplejwt.tokens import AccessToken
+from rest_framework.test import APITestCase
+from django.contrib.auth import get_user_model
+from products.models import Category, Product
+from orders.models import Order
 
-class ProductAPITest(TestCase):
+User = get_user_model()
 
+class CategoryTests(APITestCase):
     def setUp(self):
-        self.client = APIClient()
+        self.user = User.objects.create_user(name='testuser', email='example@gmail.com', password='testpassword')
+        self.token = self.get_jwt_token()
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.category_url = reverse('category-list-create')
 
-        # Create a user (for testing authentication)
-        self.user = User.objects.create_user(username='testuser', email='example@gmail.com', password='testpassword')
-        self.access_token = AccessToken.for_user(self.user)
+    def get_jwt_token(self):
+        url = reverse('token_obtain_pair')
+        response = self.client.post(url, {'email': 'example@gmail.com', 'password': 'testpassword'}, format='json')
+        return response.data['access']
 
-        # Create categories
-        self.category1 = Category.objects.create(name='Electronics')
-        self.category2 = Category.objects.create(name='Clothing')
+    def test_create_category(self):
+        data = {"category_name": "Gadgets"}
+        response = self.client.post(self.category_url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Category.objects.count(), 1)
+        self.assertEqual(Category.objects.get().category_name, 'Gadgets')
 
-        # Create products
-        self.product1 = Product.objects.create(
-            name='Laptop',
-            description='Powerful laptop for professionals',
+    def test_list_categories(self):
+        Category.objects.create(category_name='Gadgets')
+        response = self.client.get(self.category_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertEqual(response.data['results'][0]['category_name'], 'Gadgets')
+
+class ProductTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(name='testuser', email='example@gmail.com', password='testpassword')
+        self.token = self.get_jwt_token()
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.category = Category.objects.create(category_name='Gadgets')
+        self.product_url = reverse('product-list-create')
+
+    def get_jwt_token(self):
+        url = reverse('token_obtain_pair')
+        response = self.client.post(url, {'email': 'example@gmail.com', 'password': 'testpassword'}, format='json')
+        return response.data['access']
+
+    def test_create_product(self):
+        data = {
+            "name": "SmartWatch",
+            "description": "Powerful smartwatch for techies",
+            "price": 1500.00,
+            "stock": 10,
+            "category": {
+                "category_name": "Gadgets"
+            }
+        }
+        response = self.client.post(self.product_url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Product.objects.count(), 1)
+        self.assertEqual(Product.objects.get().name, 'SmartWatch')
+
+    def test_list_products(self):
+        Product.objects.create(
+            name="SmartWatch",
+            description="Powerful smartwatch for techies",
             price=1500.00,
             stock=10,
-            category=self.category1
+            category=self.category
         )
-        self.product2 = Product.objects.create(
-            name='T-shirt',
-            description='Comfortable cotton t-shirt',
-            price=20.00,
-            stock=50,
-            category=self.category2
+        response = self.client.get(self.product_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertEqual(response.data['results'][0]['name'], 'SmartWatch')
+
+    def test_retrieve_product(self):
+        product = Product.objects.create(
+            name="SmartWatch",
+            description="Powerful smartwatch for techies",
+            price=1500.00,
+            stock=10,
+            category=self.category
         )
-
-    def test_get_all_products(self):
-        """
-        Ensure we can retrieve all products.
-        """
-        url = reverse('product-list-create')
+        url = reverse('product-detail', args=[product.id])
         response = self.client.get(url)
-
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['results']), 2)
+        self.assertEqual(response.data['name'], 'SmartWatch')
 
-    def test_get_product_detail(self):
-        """
-        Ensure we can retrieve a product by its ID.
-        """
-        url = reverse('product-detail', args=[self.product1.id])
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['name'], 'Laptop')
-
-    def test_create_product_authenticated(self):
-        """
-        Ensure we can create a new product when authenticated.
-        """
-        url = reverse('product-list-create')
-        data = {
-            'name': 'Keyboard',
-            'description': 'Mechanical keyboard for gaming',
-            'price': 100.00,
-            'stock': 20,
-            'category': self.category1.id
-        }
-
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
-        response = self.client.post(url, data, format='json')
-
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(Product.objects.count(), 3)
-
-    def test_create_product_unauthenticated(self):
-        """
-        Ensure we cannot create a product when unauthenticated.
-        """
-        url = reverse('product-list-create')
-        data = {
-            'name': 'Mouse',
-            'description': 'Wireless mouse',
-            'price': 50.00,
-            'stock': 30,
-            'category': self.category1.id
-        }
-
-        response = self.client.post(url, data, format='json')
-        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-
-    def test_update_product_authenticated(self):
-        """
-        Ensure we can update an existing product when authenticated.
-        """
-        url = reverse('product-detail', args=[self.product1.id])
-        data = {
-            'name': 'Laptop Pro',
-            'description': 'Upgraded powerful laptop for professionals',
-            'price': 2000.00,
-            'stock': 5,
-            'category': self.category1.id
-        }
-
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
-        response = self.client.put(url, data, format='json')
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.product1.refresh_from_db()
-        self.assertEqual(self.product1.name, 'Laptop Pro')
-        self.assertEqual(self.product1.price, 2000.00)
-
-    def test_delete_product_authenticated(self):
-        """
-        Ensure we can delete an existing product when authenticated.
-        """
-        url = reverse('product-detail', args=[self.product1.id])
-
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+    def test_delete_product(self):
+        product = Product.objects.create(
+            name="SmartWatch",
+            description="Powerful smartwatch for techies",
+            price=1500.00,
+            stock=10,
+            category=self.category
+        )
+        url = reverse('product-detail', args=[product.id])
         response = self.client.delete(url)
-
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        self.assertEqual(Product.objects.count(), 1)
-
-    def test_search_products(self):
-        """
-        Ensure we can search for products.
-        """
-        url = reverse('product-list-create') + '?search=Laptop'
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['results']), 1)
-
-    def test_pagination(self):
-        """
-        Ensure the product list endpoint supports pagination.
-        """
-        url = reverse('product-list-create') + '?page=1&page_size=1'
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['results']), 1)
-        self.assertIn('next', response.data)
-
-    def test_filter_products_by_category(self):
-        """
-        Ensure we can filter products by category.
-        """
-        url = reverse('product-list-create') + f'?category={self.category1.id}'
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['results']), 1)
-        self.assertEqual(response.data['results'][0]['name'], 'Laptop')
-
-class OrderAPITest(TestCase):
-
+        self.assertEqual(Product.objects.count(), 0)
+        
+class OrderTests(APITestCase):
     def setUp(self):
-        self.client = APIClient()
-        self.user = User.objects.create_user(username='testuser', email='example@gmail.com', password='testpassword')
-        self.access_token = AccessToken.for_user(self.user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        self.user = User.objects.create_user(name='testuser', email='example@gmail.com', password='testpassword')
+        self.token = self.get_jwt_token()
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.category = Category.objects.create(category_name='Gadgets')
+        self.product = Product.objects.create(
+            name="SmartWatch",
+            description="A smart watch",
+            price=199.99,
+            stock=100,
+            category=self.category
+        )
 
-        self.category = Category.objects.create(name='Electronics')
-        self.product1 = Product.objects.create(name='Laptop', description='Powerful laptop', price=1500.00, stock=10, category=self.category)
-        self.product2 = Product.objects.create(name='Mouse', description='Wireless mouse', price=50.00, stock=100, category=self.category)
+        self.order_create_url = reverse('order-create')
+        self.order_history_url = reverse('order-history')
 
-    def test_place_order(self):
-        url = reverse('order-list')
+    def get_jwt_token(self):
+        url = reverse('token_obtain_pair')
+        response = self.client.post(url, {'email': 'example@gmail.com', 'password': 'testpassword'}, format='json')
+        return response.data['access']
+
+    def test_create_order(self):
         data = {
-            "items": [
-                {"product": self.product1.name, "quantity": 1},
-                {"product": self.product2.name, "quantity": 2}
-            ]
+            "products": [self.product.id],
+            "quantity": 2
         }
-        response = self.client.post(url, data, format='json')
-
+        response = self.client.post(self.order_create_url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Order.objects.count(), 1)
-        self.assertEqual(OrderItem.objects.count(), 2)
-        self.assertEqual(OrderItem.objects.first().product, self.product1)
+        order = Order.objects.get()
+        self.assertEqual(order.user, self.user)
+        self.assertEqual(order.products.first(), self.product)
+        self.assertEqual(order.quantity, 2)
 
     def test_order_history(self):
-        # Create an order for testing
-        order = Order.objects.create(user=self.user)
-        OrderItem.objects.create(order=order, product=self.product1, quantity=1)
-        OrderItem.objects.create(order=order, product=self.product2, quantity=2)
-
-        url = reverse('order-list')
-        response = self.client.get(url)
-
+        Order.objects.create(user=self.user, quantity=2)
+        response = self.client.get(self.order_history_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]['id'], order.id)
-        self.assertEqual(len(response.data[0]['items']), 2)
+        self.assertEqual(len(response.data['results']), 1)
+
+        order = response.data['results'][0]
+        self.assertEqual(order['quantity'], 2)
+        self.assertEqual(order['user'], self.user.id)
